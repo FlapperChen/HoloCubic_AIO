@@ -44,8 +44,8 @@ static void read_config(MP_Config *cfg)
     if (size == 0)
     {
         // 默认值
-        cfg->switchFlag = 1; // 是否自动播放下一个（0不切换 1自动切换）
-        cfg->powerFlag = 0;  // 功耗控制（0低发热 1性能优先）
+        cfg->switchFlag = 0; // 是否自动播放下一个（0不切换 1自动切换）
+        cfg->powerFlag = 1;  // 功耗控制（0低发热 1性能优先）
         write_config(cfg);
     }
     else
@@ -250,16 +250,20 @@ static void media_player_process(AppController *sys,
         // 结束播放
         release_player_decoder();
         run_data->file.close();
-        if (0 == cfg_data.switchFlag)
-        {
-            // 创建播放(重复播放)
-            video_start(false);
-        }
-        else
-        {
-            // 创建播放(播放下一个)
-            video_start(true);
-        }
+        #ifndef MINECRAFT
+            if (0 == cfg_data.switchFlag)
+            {
+                // 创建播放(重复播放)
+                video_start(false);
+            }
+            else
+            {
+                // 创建播放(播放下一个)
+                video_start(true);
+            }
+        #else
+            video_start(false); // Minecraft模式下 只循环播放当前视频
+        #endif
     }
 }
 
