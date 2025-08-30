@@ -12,6 +12,9 @@ struct Weather
     int maxTemp;      // 最高气温
     int minTemp;      // 最低气温
 
+    int temperatureLocal;  // 本地传感器温度
+    int humidityLocal;     // 本地传感器湿度
+    
     int windLevel;
     int airQulity;
 

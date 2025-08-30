@@ -22,6 +22,7 @@
 #define UPDATE_WEATHER 0x01       // 更新天气
 #define UPDATE_DALIY_WEATHER 0x02 // 更新每天天气
 #define UPDATE_TIME 0x04          // 更新时间
+#define UPDATE_LOCAL_TEMP 0x08    // 更新本地传感器温度
 
 // // NTP 服务器信息
 // const char* ntpServer = "ntp.aliyun.com"; // 阿里云NTP服务器
@@ -117,7 +118,8 @@ enum WEA_EVENT_ID
 {
     UPDATE_NOW,
     UPDATE_NTP,
-    UPDATE_DAILY
+    UPDATE_DAILY,
+    UPDATE_LOCAL
 };
 
 /*
@@ -356,6 +358,62 @@ static long long get_timestamp(String url)
     return run_data->preNetTimestamp;
 }
 
+static void get_localTemperature(short maxT[], short minT[])
+{
+    if (WL_CONNECTED != WiFi.status())
+        return;
+
+    HTTPClient http;
+    http.setTimeout(1000);
+    char api[128] = {0};
+    snprintf(api, 128, WEATHER_DALIY_FORECAST_API,
+             cfg_data.tianqi_api_key.c_str(),
+             cfg_data.tianqi_city_code.c_str());
+    Serial.print("API = ");
+    Serial.println(api);
+    http.begin(api);
+
+    // 本地温度
+    run_data->wea.temperatureLocal = 123;
+    // 本地湿度
+    run_data->wea.humidityLocal = 456;
+
+    int httpCode = http.GET();
+    if (httpCode > 0)
+    {
+        // file found at server
+        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY)
+        {
+            String payload = http.getString();
+            Serial.println(payload);
+            DynamicJsonDocument doc2(4096);
+            deserializeJson(doc2, payload);
+            // JsonObject sk = doc2.as<JsonObject>();
+            // for (int gDW_i = 0; gDW_i < FORECAST_DAYS; ++gDW_i)
+            // {
+            //     maxT[gDW_i] = sk["data"][gDW_i]["tem_day"].as<int>();
+            //     minT[gDW_i] = sk["data"][gDW_i]["tem_night"].as<int>();
+            // }
+
+            if (doc2.containsKey("forecasts"))
+            {
+                JsonObject weather_forecast = doc2["forecasts"][0];
+                for (int i = 0; i < FORECAST_DAYS; i++)
+                {
+                    maxT[i] = weather_forecast["casts"][i]["daytemp"].as<int>();
+                    minT[i] = weather_forecast["casts"][i]["nighttemp"].as<int>();
+                }
+                Serial.println("Get weather cast OK\n");
+            }
+        }
+    }
+    else
+    {
+        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+    }
+    http.end();
+}
+
 static void get_daliyWeather(short maxT[], short minT[])
 {
     if (WL_CONNECTED != WiFi.status())
@@ -565,6 +623,11 @@ static void task_update(void *parameter)
             get_daliyWeather(run_data->wea.daily_max, run_data->wea.daily_min);
             run_data->update_type &= (~UPDATE_DALIY_WEATHER);
         }
+        if (run_data->update_type & UPDATE_LOCAL_TEMP)
+        {
+            get_localTemperature(run_data->wea.daily_max, run_data->wea.daily_min);
+            run_data->update_type &= (~UPDATE_LOCAL_TEMP);
+        }
         vTaskDelay(300 / portTICK_PERIOD_MS);
     }
 }
@@ -606,6 +669,15 @@ static void weather_message_handle(const char *from, const char *to,
 
             // 更新过程，使用如下代码或者替换成异步任务
             get_daliyWeather(run_data->wea.daily_max, run_data->wea.daily_min);
+        };
+        break;
+        case UPDATE_LOCAL:
+        {
+            Serial.print(F("local temperature update.\n"));
+            run_data->update_type |= UPDATE_LOCAL_TEMP;
+
+            // 更新过程，使用如下代码或者替换成异步任务
+            get_localTemperature(run_data->wea.daily_max, run_data->wea.daily_min);
         };
         break;
         default:
