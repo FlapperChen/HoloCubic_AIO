@@ -265,10 +265,15 @@ void display_weather(struct Weather weaInfo, lv_scr_load_anim_t anim_type)
     lv_label_set_text_fmt(txtLabel, "   今日天气:%s, %s风%s级.              ",
                           weaInfo.weather, weaInfo.windDir, weaInfo.windpower);
 
-    lv_bar_set_value(tempBar, weaInfo.temperature, LV_ANIM_ON);
-    lv_label_set_text_fmt(tempLabel, "%2d°C", weaInfo.temperature);
-    lv_bar_set_value(humiBar, weaInfo.humidity, LV_ANIM_ON);
-    lv_label_set_text_fmt(humiLabel, "%d%%", weaInfo.humidity);
+    // lv_bar_set_value(tempBar, weaInfo.temperature, LV_ANIM_ON);
+    // lv_label_set_text_fmt(tempLabel, "%2d°C", weaInfo.temperature);
+    // lv_bar_set_value(humiBar, weaInfo.humidity, LV_ANIM_ON);
+    // lv_label_set_text_fmt(humiLabel, "%d%%", weaInfo.humidity);
+
+    lv_bar_set_value(tempBar, weaInfo.temperatureLocal, LV_ANIM_ON);
+    lv_label_set_text_fmt(tempLabel, "%2d°C", weaInfo.temperatureLocal);
+    lv_bar_set_value(humiBar, weaInfo.humidityLocal, LV_ANIM_ON);
+    lv_label_set_text_fmt(humiLabel, "%d%%", weaInfo.humidityLocal);
 
     // // 绘制图形
     // lv_obj_align(weatherImg, NULL, LV_ALIGN_TOP_RIGHT, -10, 10);

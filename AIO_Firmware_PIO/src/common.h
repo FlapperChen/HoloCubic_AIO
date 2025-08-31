@@ -12,6 +12,7 @@
 #include "driver/display.h"
 #include "driver/ambient.h"
 #include "driver/imu.h"
+#include "driver/temp.h"
 #include "network.h"
 
 // RGB
@@ -35,6 +36,7 @@ extern Network g_network;  // 网络连接
 extern FlashFS g_flashCfg; // flash中的文件系统（替代原先的Preferences）
 extern Display screen;     // 屏幕对象
 extern Ambient ambLight;   // 光纤传感器对象
+extern TEMP localTemp; // 温湿度传感器对象
 
 boolean doDelayMillisTime(unsigned long interval,
                           unsigned long *previousMillis,
@@ -43,6 +45,10 @@ boolean doDelayMillisTime(unsigned long interval,
 // 光感 (与MPU6050一致)
 #define AMB_I2C_SDA 32
 #define AMB_I2C_SCL 33
+
+// 温湿度传感器 AHT20 (与默认I2C GPIO一致)
+#define TEMP_I2C_SDA 21
+#define TEMP_I2C_SCL 22
 
 // 屏幕尺寸
 #define SCREEN_HOR_RES 240 // 水平
