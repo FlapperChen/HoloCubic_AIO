@@ -97,6 +97,7 @@ struct WeatherAppRunData
 {
     unsigned long preWeatherMillis; // 上一回更新天气时的毫秒数
     unsigned long preTimeMillis;    // 更新时间计数器
+    unsigned long preTempMillis;    // 上一回更新本地传感器时的毫秒数
     long long preNetTimestamp;      // 上一次的网络时间戳
     long long errorNetTimestamp;    // 网络到显示过程中的时间误差
     long long preLocalTimestamp;    // 上一次的本地机器时间戳
@@ -360,8 +361,19 @@ static long long get_timestamp(String url)
 
 static void get_localTemperature()
 {
-    localTemp.getTemp();
-    Serial.printf("Temp = %.2f C, Hum = %.2f %%\n", localTemp.temperature, localTemp.humidity);
+    int result = localTemp.getTemp();
+    if (result == 0) // 成功读取到数据
+    {
+        Serial.printf("Local sensor - Temp = %.2f C, Hum = %.2f %%\n", localTemp.temperature, localTemp.humidity);
+        
+        // 将本地传感器数据存储到天气结构体中
+        run_data->wea.temperatureLocal = (int)localTemp.temperature;
+        run_data->wea.humidityLocal = (int)localTemp.humidity;
+    }
+    else
+    {
+        Serial.println("Failed to read from local temperature sensor");
+    }
 }
 
 static void get_daliyWeather(short maxT[], short minT[])
@@ -445,6 +457,7 @@ static int weather_init(AppController *sys)
     run_data->clock_page = 0;
     run_data->preWeatherMillis = 0;
     run_data->preTimeMillis = 0;
+    run_data->preTempMillis = 0;
     // 强制更新
     run_data->coactusUpdateFlag = 0x01;
     run_data->update_type = 0x00; // 表示什么也不需要更新
@@ -461,6 +474,10 @@ static int weather_init(AppController *sys)
     //     &run_data->xHandle_task_update); /*任务句柄*/
 
     localTemp.init(); // 初始化温湿度传感器
+    
+    // 初始化时获取一次传感器数据
+    delay(100); // 等待传感器稳定
+    get_localTemperature();
     return 0;
 }
 
@@ -497,14 +514,22 @@ static void weather_process(AppController *sys,
     if (run_data->clock_page == 0)
     {
         display_weather(run_data->wea, anim_type);
+        
+        // 独立的本地传感器更新（每2秒更新一次，符合AHT20数据手册建议）
+        if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(2000, &run_data->preTempMillis, false))
+        {
+            get_localTemperature();
+        }
+        
         if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.weatherUpdataInterval, &run_data->preWeatherMillis, false))
         {
             sys->send_to(WEATHER_APP_NAME, CTRL_NAME,
                          APP_MESSAGE_WIFI_CONN, (void *)UPDATE_NOW, NULL);
             sys->send_to(WEATHER_APP_NAME, CTRL_NAME,
                          APP_MESSAGE_WIFI_CONN, (void *)UPDATE_DAILY, NULL);
-            sys->send_to(WEATHER_APP_NAME, CTRL_NAME,
-                         APP_MESSAGE_WIFI_CONN, (void *)UPDATE_LOCAL, NULL);
+            // 不再在这里更新本地传感器，因为我们有独立的更新逻辑
+            // sys->send_to(WEATHER_APP_NAME, CTRL_NAME,
+            //              APP_MESSAGE_WIFI_CONN, (void *)UPDATE_LOCAL, NULL);
         }
 
         if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.timeUpdataInterval, &run_data->preTimeMillis, false))

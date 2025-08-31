@@ -33,6 +33,9 @@ void TEMP::init()
     Serial.println("Qwiic Humidity AHT20");
 
     Wire.begin(TEMP_I2C_SDA, TEMP_I2C_SCL); //Join I2C bus
+    Serial.printf("I2C initialized with SDA=%d, SCL=%d\n", TEMP_I2C_SDA, TEMP_I2C_SCL);
+    
+    delay(100); // 等待I2C稳定
 
     //Check if the AHT20 will acknowledge
     if (false == tempSensor.begin())
@@ -41,6 +44,9 @@ void TEMP::init()
         return;
     }
     Serial.println("AHT20 acknowledged.");
+    
+    // 等待传感器完全准备好
+    delay(500);
     this->ready = true;
     return;
 }
@@ -53,27 +59,32 @@ int TEMP::getTemp()
     {
         Serial.println("AHT20 not ready. Please init first.");
         this->init();
-        return -1;
+        if (!this->ready)
+            return -1;
     }
+    
     //If a new measurement is available
-    if (true == tempSensor.available())
+    if (tempSensor.available() == true)
     {
-        Serial.print("read Temperature: ");
+        //Get the new temperature and humidity value
+        temperature = tempSensor.getTemperature();
+        humidity = tempSensor.getHumidity();
+
+        //Print the results
+        Serial.print("Temperature: ");
+        Serial.print(temperature, 2);
+        Serial.print(" C\t");
+        Serial.print("Humidity: ");
+        Serial.print(humidity, 2);
+        Serial.print("% RH");
+
+        Serial.println();
+
+        return 0;
+    }
+    else
+    {
+        Serial.println("No new measurement available from AHT20");
         return -1;
     }
-    //Get the new temperature and humidity value
-    temperature = tempSensor.getTemperature();
-    humidity = tempSensor.getHumidity();
-
-    //Print the results
-    Serial.print("Temperature: ");
-    Serial.print(temperature, 2);
-    Serial.print(" C\t");
-    Serial.print("Humidity: ");
-    Serial.print(humidity, 2);
-    Serial.print("% RH");
-
-    Serial.println();
-
-    return 0;
 }
