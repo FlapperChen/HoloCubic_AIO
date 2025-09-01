@@ -246,7 +246,11 @@ void display_weather_init(lv_scr_load_anim_t anim_type)
 
 void display_weather(struct Weather weaInfo, lv_scr_load_anim_t anim_type)
 {
-    display_weather_init(anim_type);
+    // 只在需要时才初始化界面
+    if (scr_1 == NULL || lv_scr_act() != scr_1)
+    {
+        display_weather_init(anim_type);
+    }
 
     lv_label_set_text(cityLabel, weaInfo.cityname);
     if (strlen(weaInfo.cityname) > 6)
@@ -270,9 +274,9 @@ void display_weather(struct Weather weaInfo, lv_scr_load_anim_t anim_type)
     // lv_bar_set_value(humiBar, weaInfo.humidity, LV_ANIM_ON);
     // lv_label_set_text_fmt(humiLabel, "%d%%", weaInfo.humidity);
 
-    lv_bar_set_value(tempBar, weaInfo.temperatureLocal, LV_ANIM_ON);
+    lv_bar_set_value(tempBar, weaInfo.temperatureLocal, LV_ANIM_OFF);  // 关闭动画，提高性能
     lv_label_set_text_fmt(tempLabel, "%2d°C", weaInfo.temperatureLocal);
-    lv_bar_set_value(humiBar, weaInfo.humidityLocal, LV_ANIM_ON);
+    lv_bar_set_value(humiBar, weaInfo.humidityLocal, LV_ANIM_OFF);  // 关闭动画，提高性能
     lv_label_set_text_fmt(humiLabel, "%d%%", weaInfo.humidityLocal);
 
     // // 绘制图形
@@ -287,11 +291,12 @@ void display_weather(struct Weather weaInfo, lv_scr_load_anim_t anim_type)
     // lv_obj_align(humiLabel, NULL, LV_ALIGN_LEFT_MID, 100, 100);
     // lv_obj_align(spaceImg, NULL, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
 
-    if (LV_SCR_LOAD_ANIM_NONE != anim_type)
+    // 只在界面切换时加载动画
+    if (LV_SCR_LOAD_ANIM_NONE != anim_type && lv_scr_act() != scr_1)
     {
         lv_scr_load_anim(scr_1, anim_type, 300, 300, false);
     }
-    else
+    else if (lv_scr_act() != scr_1)
     {
         lv_scr_load(scr_1);
     }
@@ -299,11 +304,20 @@ void display_weather(struct Weather weaInfo, lv_scr_load_anim_t anim_type)
 
 void display_time(struct TimeStr timeInfo, lv_scr_load_anim_t anim_type)
 {
-    display_weather_init(anim_type);
-    lv_label_set_text_fmt(clockLabel_1, "%02d#ffa500 %02d#", timeInfo.hour, timeInfo.minute);
-    lv_label_set_text_fmt(clockLabel_2, "%02d", timeInfo.second);
-    lv_label_set_text_fmt(dateLabel, "%2d月%2d日   周%s", timeInfo.month, timeInfo.day,
-                          weekDayCh[timeInfo.weekday]);
+    // 只在界面不存在时才初始化
+    if (scr_1 == NULL || lv_scr_act() != scr_1)
+    {
+        display_weather_init(anim_type);
+    }
+    
+    // 只更新时间相关的控件，不重新创建整个界面
+    if (clockLabel_1 != NULL && clockLabel_2 != NULL && dateLabel != NULL)
+    {
+        lv_label_set_text_fmt(clockLabel_1, "%02d#ffa500 %02d#", timeInfo.hour, timeInfo.minute);
+        lv_label_set_text_fmt(clockLabel_2, "%02d", timeInfo.second);
+        lv_label_set_text_fmt(dateLabel, "%2d月%2d日   周%s", timeInfo.month, timeInfo.day,
+                              weekDayCh[timeInfo.weekday]);
+    }
 
     // lv_obj_align(clockLabel_1, NULL, LV_ALIGN_LEFT_MID, 0, 10);
     // lv_obj_align(clockLabel_2, NULL, LV_ALIGN_LEFT_MID, 165, 9);
