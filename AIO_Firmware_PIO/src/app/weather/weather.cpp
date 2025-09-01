@@ -495,7 +495,8 @@ static void weather_process(AppController *sys,
     {
         // 间接强制更新
         run_data->coactusUpdateFlag = 0x01;
-        delay(500); // 以防间接强制更新后，生产很多请求 使显示卡顿
+        // 减少延迟，提高响应速度
+        // delay(500); // 以防间接强制更新后，生产很多请求 使显示卡顿
     }
     else if (TURN_RIGHT == act_info->active)
     {
@@ -515,8 +516,8 @@ static void weather_process(AppController *sys,
     {
         display_weather(run_data->wea, anim_type);
         
-        // 独立的本地传感器更新（每2秒更新一次，符合AHT20数据手册建议）
-        if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(2000, &run_data->preTempMillis, false))
+        // 独立的本地传感器更新（每5秒更新一次，减少I2C总线占用）
+        if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(5000, &run_data->preTempMillis, false))
         {
             get_localTemperature();
         }
@@ -527,9 +528,6 @@ static void weather_process(AppController *sys,
                          APP_MESSAGE_WIFI_CONN, (void *)UPDATE_NOW, NULL);
             sys->send_to(WEATHER_APP_NAME, CTRL_NAME,
                          APP_MESSAGE_WIFI_CONN, (void *)UPDATE_DAILY, NULL);
-            // 不再在这里更新本地传感器，因为我们有独立的更新逻辑
-            // sys->send_to(WEATHER_APP_NAME, CTRL_NAME,
-            //              APP_MESSAGE_WIFI_CONN, (void *)UPDATE_LOCAL, NULL);
         }
 
         if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.timeUpdataInterval, &run_data->preTimeMillis, false))
@@ -538,19 +536,21 @@ static void weather_process(AppController *sys,
             sys->send_to(WEATHER_APP_NAME, CTRL_NAME,
                          APP_MESSAGE_WIFI_CONN, (void *)UPDATE_NTP, NULL);
         }
-        else if (GET_SYS_MILLIS() - run_data->preLocalTimestamp > 400)
+        else if (GET_SYS_MILLIS() - run_data->preLocalTimestamp > 100)  // 减少到100ms更新一次，提高流畅度
         {
             updateTime_RTC(get_timestamp());
         }
         run_data->coactusUpdateFlag = 0x00; // 取消强制更新标志
         display_space();
-        delay(30);
+        // 移除delay，让主循环更流畅
+        // delay(30);
     }
     else if (run_data->clock_page == 1)
     {
         // 仅在切换界面时获取一次未来天气
         display_curve(run_data->wea.daily_max, run_data->wea.daily_min, anim_type);
-        delay(300);
+        // 减少延迟，提高响应速度
+        // delay(300);
     }
 }
 
