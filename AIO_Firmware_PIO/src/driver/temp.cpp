@@ -56,7 +56,7 @@ int TEMP::getTemp()
         return -1;
     }
     //If a new measurement is available
-    if (true == tempSensor.available())
+    if (!tempSensor.available())
     {
         Serial.print("read Temperature: ");
         return -1;
