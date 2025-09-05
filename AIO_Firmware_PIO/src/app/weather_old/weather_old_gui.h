@@ -12,9 +12,11 @@ extern "C"
         lv_task_handler(); //等待动画完成
 
     void weather_old_gui_init(void);
-    void display_hardware_old(const char *info, lv_scr_load_anim_t anim_type);
-    void display_weather_old(const char *cityname, const char *temperature,
+    void display_weather_old(const char *title, const char *temperature,
                          int weathercode, lv_scr_load_anim_t anim_type);
+    void display_sensor_data(const char *temperature, const char *humidity, 
+                         lv_scr_load_anim_t anim_type);
+    void display_humidity_data(const char *humidity, const char *temperature, lv_scr_load_anim_t anim_type);
     void display_time_old(const char *date, const char *time,
                       lv_scr_load_anim_t anim_type);
     void weather_old_gui_del(void);

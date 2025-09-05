@@ -4,26 +4,31 @@
 #include "sys/app_controller.h"
 #include "network.h"
 #include "common.h"
+#include <Wire.h>
+#include <SparkFun_Qwiic_Humidity_AHT20.h>
 
 #define TIME_API "https://acs.m.taobao.com/gw/mtop.common.getTimestamp/"
-#define ZHIXIN_WEATHER_API "https://api.seniverse.com/v3/weather/now.json?key=%s&location=%s&language=%s&unit=c"
 #define WEATHER_PAGE_SIZE 2
 
-struct Weather
+// AHT20 I2C引脚定义
+#define AHT20_SDA_PIN 21
+#define AHT20_SCL_PIN 22
+
+// AHT20 传感器 - 使用独立的I2C总线 (GPIO21/GPIO22)
+// 注意：AHT20使用GPIO21(SDA)和GPIO22(SCL)，与MPU6050分离
+
+struct SensorData
 {
-    int weather_code;
-    int temperature;
+    float temperature;
+    float humidity;
 };
 
-// 天气的持久化配置
+// 传感器的持久化配置
 #define WEATHER_OLD_CONFIG_PATH "/weather_old.cfg"
 struct WT_Config
 {
-    String cityname;                     // 显示的城市
-    String language;                     // 天气查询的地址编码
-    String weather_key;                  // 知心天气api_key（秘钥）
-    unsigned long weatherUpdataInterval; // 天气更新的时间间隔(s)
-    unsigned long timeUpdataInterval;    // 日期时钟更新的时间间隔(s)
+    unsigned long sensorUpdateInterval;   // 传感器更新的时间间隔(s)
+    unsigned long timeUpdateInterval;     // 日期时钟更新的时间间隔(s)
 };
 
 static void write_config(const WT_Config *cfg)
@@ -31,14 +36,11 @@ static void write_config(const WT_Config *cfg)
     char tmp[16];
     // 将配置数据保存在文件中（持久化）
     String w_data;
-    w_data = w_data + cfg->cityname + "\n";
-    w_data = w_data + cfg->language + "\n";
-    w_data = w_data + cfg->weather_key + "\n";
     memset(tmp, 0, 16);
-    snprintf(tmp, 16, "%lu\n", cfg->weatherUpdataInterval);
+    snprintf(tmp, 16, "%lu\n", cfg->sensorUpdateInterval);
     w_data += tmp;
     memset(tmp, 0, 16);
-    snprintf(tmp, 16, "%lu\n", cfg->timeUpdataInterval);
+    snprintf(tmp, 16, "%lu\n", cfg->timeUpdateInterval);
     w_data += tmp;
     g_flashCfg.writeFile(WEATHER_OLD_CONFIG_PATH, w_data.c_str());
 }
@@ -50,94 +52,44 @@ static void read_config(WT_Config *cfg)
     char info[128] = {0};
     uint16_t size = g_flashCfg.readFile(WEATHER_OLD_CONFIG_PATH, (uint8_t *)info);
     info[size] = 0;
-    if (size == 0)
-    {
-        // 默认值
-        cfg->cityname = "Beijing";
-        cfg->language = "zh-Hans";
-        cfg->weatherUpdataInterval = 900000; // 天气更新的时间间隔900000(900s)
-        cfg->timeUpdataInterval = 900000;    // 日期时钟更新的时间间隔900000(900s)
-        write_config(cfg);
+    
+    // 强制重置配置，确保使用正确的默认值
+    cfg->sensorUpdateInterval = 5000;   // 传感器更新间隔5秒 (5000毫秒)
+    cfg->timeUpdateInterval = 900000;   // 时间更新间隔900秒 (15分钟)
+    write_config(cfg);
+    
+    // 安全检查：确保配置值不为0或过小
+    if (cfg->sensorUpdateInterval < 1000) {
+        cfg->sensorUpdateInterval = 5000;
     }
-    else
-    {
-        // 解析数据
-        char *param[5] = {0};
-        analyseParam(info, 5, param);
-        cfg->cityname = param[0];
-        cfg->language = param[1];
-        cfg->weather_key = param[2];
-        cfg->weatherUpdataInterval = atol(param[3]);
-        cfg->timeUpdataInterval = atol(param[4]);
+    if (cfg->timeUpdateInterval < 60000) {
+        cfg->timeUpdateInterval = 900000;
     }
 }
 
 struct WeatherAppRunData
 {
-    unsigned long preWeatherMillis; // 上一回更新天气时的毫秒数
-    unsigned long preTimeMillis;    // 更新时间计数器
-    long long m_preNetTimestamp;    // 上一次的网络时间戳
-    long long m_errorNetTimestamp;  // 网络到显示过程中的时间误差
-    long long m_preLocalTimestamp;  // 上一次的本地机器时间戳
-    unsigned int coactusUpdateFlag; // 强制更新标志
-    int clock_page;                 // 时钟桌面的播放记录
+    unsigned long preSensorMillis;    // 上一回更新传感器时的毫秒数
+    unsigned long preTimeMillis;      // 更新时间计数器
+    long long m_preNetTimestamp;      // 上一次的网络时间戳
+    long long m_errorNetTimestamp;    // 网络到显示过程中的时间误差
+    long long m_preLocalTimestamp;    // 上一次的本地机器时间戳
+    unsigned int coactusUpdateFlag;   // 强制更新标志
+    unsigned int forceSensorUpdate;   // 专门用于传感器的强制更新标志
+    int clock_page;                   // 时钟桌面的播放记录
 
-    ESP32Time g_rtc; // 用于时间解码
-    Weather weather; // 保存天气状况
+    ESP32Time g_rtc;                  // 用于时间解码
+    SensorData sensorData;            // 保存传感器数据
 };
 
 static WT_Config cfg_data;
 static WeatherAppRunData *run_data = NULL;
+static AHT20 humiditySensor;
+static TwoWire AHT20_Wire = TwoWire(1); // 使用I2C总线1
 
-static Weather getWeather(void)
+static SensorData getSensorData(void)
 {
-    return run_data->weather;
-}
-
-static Weather getWeather(String url)
-{
-    if (WL_CONNECTED != WiFi.status())
-        return run_data->weather;
-
-    HTTPClient http;
-    http.setTimeout(1000);
-    http.begin(url);
-
-    // start connection and send HTTP headerFFF
-    int httpCode = http.GET();
-
-    // httpCode will be negative on error
-    if (httpCode > 0)
-    {
-        // file found at server
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY)
-        {
-            String payload = http.getString();
-            Serial.println(payload);
-            int code_index = (payload.indexOf("code")) + 7;         // 获取code位置
-            int temp_index = (payload.indexOf("temperature")) + 14; // 获取temperature位置
-            run_data->weather.weather_code =
-                atol(payload.substring(code_index, temp_index - 17).c_str());
-            run_data->weather.temperature =
-                atol(payload.substring(temp_index, payload.length() - 47).c_str());
-        }
-    }
-    else
-    {
-        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
-    }
-    http.end();
-
-    return run_data->weather;
-}
-
-static long long getTimestamp()
-{
-    // 使用本地的机器时钟
-    run_data->m_preNetTimestamp = run_data->m_preNetTimestamp + (GET_SYS_MILLIS() - run_data->m_preLocalTimestamp);
-    run_data->m_preLocalTimestamp = GET_SYS_MILLIS();
-
-    return run_data->m_preNetTimestamp;
+    return run_data->sensorData;
 }
 
 static long long getTimestamp(String url)
@@ -159,7 +111,6 @@ static long long getTimestamp(String url)
         if (httpCode == HTTP_CODE_OK)
         {
             String payload = http.getString();
-            Serial.println(payload);
             int time_index = (payload.indexOf("data")) + 12;
             time = payload.substring(time_index, payload.length() - 3);
             // 以网络时间戳为准
@@ -169,7 +120,6 @@ static long long getTimestamp(String url)
     }
     else
     {
-        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
         // 得不到网络时间戳时
         run_data->m_preNetTimestamp = run_data->m_preNetTimestamp + (GET_SYS_MILLIS() - run_data->m_preLocalTimestamp);
         run_data->m_preLocalTimestamp = GET_SYS_MILLIS();
@@ -179,11 +129,13 @@ static long long getTimestamp(String url)
     return run_data->m_preNetTimestamp;
 }
 
-static void UpdateWeather(Weather *weather, lv_scr_load_anim_t anim_type)
+static void UpdateSensorData(SensorData *sensorData, lv_scr_load_anim_t anim_type)
 {
     char temperature[10] = {0};
-    sprintf(temperature, "%d", weather->temperature);
-    display_weather_old(cfg_data.cityname.c_str(), temperature, weather->weather_code, anim_type);
+    char humidity[10] = {0};
+    sprintf(temperature, "%.1f", sensorData->temperature);
+    sprintf(humidity, "%.1f", sensorData->humidity);
+    display_sensor_data(temperature, humidity, anim_type);
 }
 
 static void UpdateTime_RTC(long long timestamp, lv_scr_load_anim_t anim_type)
@@ -196,27 +148,78 @@ static void UpdateTime_RTC(long long timestamp, lv_scr_load_anim_t anim_type)
 
 static int weather_init(AppController *sys)
 {
+    Serial.println("Weather Old App: Starting initialization...");
+    
     weather_old_gui_init();
     // 获取配置信息
     read_config(&cfg_data);
+    
+    Serial.println("Weather Old App: GUI and config initialized");
+    
+    // 初始化 AHT20 传感器 - 使用独立的I2C总线
+    // AHT20使用GPIO21(SDA)和GPIO22(SCL)，与MPU6050(GPIO32/GPIO33)分离
+    
+    // 初始化AHT20专用的I2C总线
+    AHT20_Wire.begin(AHT20_SDA_PIN, AHT20_SCL_PIN);
+    AHT20_Wire.setClock(400000); // 设置I2C时钟频率为400kHz
+    
+    // 延时确保I2C总线稳定
+    delay(100);
+    
+    // 初始化AHT20传感器
+    if (false == humiditySensor.begin(AHT20_Wire))
+    {
+        Serial.println("AHT20 sensor initialization failed!");
+        // 即使传感器初始化失败，也不阻止应用启动
+        // 将使用默认的传感器数据
+    }
+    else
+    {
+        Serial.println("AHT20 sensor initialized successfully.");
+        // 等待传感器完全准备好
+        delay(500);
+    }
+    
     // 初始化运行时参数
     run_data = (WeatherAppRunData *)calloc(1, sizeof(WeatherAppRunData));
-    run_data->m_preNetTimestamp = 1577808000000; // 上一次的网络时间戳 初始化围殴2020-01-01 00:00:00
+    if (NULL == run_data)
+    {
+        Serial.println("Weather Old App: Failed to allocate memory for run_data!");
+        return -1; // 内存分配失败
+    }
+    
+    Serial.println("Weather Old App: Memory allocated successfully");
+    
+    run_data->m_preNetTimestamp = 1577808000000; // 上一次的网络时间戳 初始化为2020-01-01 00:00:00
     run_data->m_errorNetTimestamp = 2;
     run_data->m_preLocalTimestamp = 0; // 上一次的本地机器时间戳
     run_data->clock_page = 0;          // 时钟桌面的播放记录
-    // 变相强制更新
-    run_data->preWeatherMillis = GET_SYS_MILLIS() - cfg_data.weatherUpdataInterval;
-    run_data->preTimeMillis = GET_SYS_MILLIS() - cfg_data.timeUpdataInterval;
-    run_data->coactusUpdateFlag = 0x01;
+    // 初始化时间记录，设置为当前时间减去间隔，确保第一次检查时会立即更新
+    unsigned long currentMillis = GET_SYS_MILLIS();
+    run_data->preSensorMillis = currentMillis - cfg_data.sensorUpdateInterval - 1000; // 减去额外1秒确保触发
+    run_data->preTimeMillis = currentMillis - cfg_data.timeUpdateInterval - 1000;
+    run_data->coactusUpdateFlag = 0x00; // 不使用强制更新，依赖时间间隔
+    run_data->forceSensorUpdate = 0x00; // 初始化传感器强制更新标志
 
-    run_data->weather = {0, 0};
+    // 初始化传感器数据为合理的默认值
+    run_data->sensorData.temperature = 25.0;  // 默认25°C
+    run_data->sensorData.humidity = 50.0;     // 默认50%湿度
+    
+    Serial.println("Weather Old App: Initialization completed successfully");
     return 0;
 }
 
 static void weather_process(AppController *sys,
                             const ImuAction *act_info)
 {
+    // 安全检查：确保运行数据已正确初始化
+    if (NULL == run_data)
+    {
+        Serial.println("Weather Old App: run_data is NULL, exiting...");
+        sys->app_exit();
+        return;
+    }
+    
     lv_scr_load_anim_t anim_type = LV_SCR_LOAD_ANIM_NONE;
     if (RETURN == act_info->active)
     {
@@ -238,41 +241,75 @@ static void weather_process(AppController *sys,
     }
     else if (GO_FORWORD == act_info->active)
     {
-        // 后仰时，变相强制更新
+        // 后仰时，强制更新当前页面的数据
         run_data->coactusUpdateFlag = 0x01;
+        run_data->forceSensorUpdate = 0x01;
     }
 
-    if (0 == run_data->clock_page) // 更新天气
+    if (0 == run_data->clock_page) // 更新传感器数据
     {
-        Weather weather = getWeather();
-        UpdateWeather(&weather, anim_type);
-        // 以下减少网络请求的压力
-        if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.weatherUpdataInterval, &run_data->preWeatherMillis, false))
+        // 检查是否需要更新传感器数据（使用简单的时间间隔检查）
+        unsigned long currentMillis = GET_SYS_MILLIS();
+        unsigned long timeSinceLastUpdate = currentMillis - run_data->preSensorMillis;
+        bool timeIntervalReached = (timeSinceLastUpdate >= cfg_data.sensorUpdateInterval);
+        bool shouldUpdateSensor = (0x01 == run_data->forceSensorUpdate) || timeIntervalReached;
+        
+        if (shouldUpdateSensor)
         {
-            sys->send_to(WEATHER_OLD_APP_NAME, CTRL_NAME,
-                         APP_MESSAGE_WIFI_CONN, (void *)run_data->clock_page, NULL);
-            run_data->coactusUpdateFlag = 0x00;
+            // 更新时间记录
+            run_data->preSensorMillis = currentMillis;
+            
+            // 尝试从AHT20传感器读取数据
+            bool dataValid = false;
+            float temp = -999.0;
+            float humi = -999.0;
+            
+            // 检查传感器是否有新数据可用
+            if (humiditySensor.available())
+            {
+                temp = humiditySensor.getTemperature();
+                humi = humiditySensor.getHumidity();
+                dataValid = true;
+            }
+            else
+            {
+                // 如果没有新数据，强制触发测量
+                delay(50); // 给传感器一些时间进行测量
+                temp = humiditySensor.getTemperature();
+                humi = humiditySensor.getHumidity();
+                dataValid = true;
+            }
+            
+            // 检查数据是否合理 (温度范围 -40 到 85°C, 湿度范围 0 到 100%)
+            if (dataValid && temp > -40 && temp < 85 && humi >= 0 && humi <= 100)
+            {
+                run_data->sensorData.temperature = temp;
+                run_data->sensorData.humidity = humi;
+            }
+            else
+            {
+                // 如果数据无效，保持之前的有效值不变
+                Serial.println("Invalid sensor data received, keeping previous values");
+            }
+            run_data->forceSensorUpdate = 0x00; // 重置传感器强制更新标志
         }
+        
+        SensorData sensorData = getSensorData();
+        UpdateSensorData(&sensorData, anim_type);
     }
 
     // 界面刷新
-    if (1 == run_data->clock_page) // 更新时钟
+    if (1 == run_data->clock_page) // 更新湿度显示页面
     {
-        // 使用本地的机器时钟
-        long long timestamp = getTimestamp() + TIMEZERO_OFFSIZE; // nowapi时间API
-        UpdateTime_RTC(timestamp, anim_type);
-        // 以下减少网络请求的压力
-        if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.timeUpdataInterval, &run_data->preTimeMillis, false))
-        {
-            // 尝试同步网络上的时钟
-            sys->send_to(WEATHER_OLD_APP_NAME, CTRL_NAME,
-                         APP_MESSAGE_WIFI_CONN, (void *)run_data->clock_page, NULL);
-            run_data->coactusUpdateFlag = 0x00;
-        }
-    }
-    else if (2 == run_data->clock_page) // NULL后期可以是具体数据
-    {
-        display_hardware_old(NULL, anim_type);
+        // 获取传感器数据
+        SensorData sensorData = getSensorData();
+        
+        // 格式化温湿度数据并显示
+        char temperature[10] = {0};
+        char humidity[10] = {0};
+        sprintf(temperature, "%.1f", sensorData.temperature);
+        sprintf(humidity, "%.1f", sensorData.humidity);
+        display_humidity_data(humidity, temperature, anim_type);
     }
 
     delay(300);
@@ -287,6 +324,8 @@ static void weather_background_task(AppController *sys,
 
 static int weather_exit_callback(void *param)
 {
+    Serial.println("Weather Old App: Starting exit process...");
+    
     weather_old_gui_del();
 
     // 释放运行数据
@@ -294,7 +333,13 @@ static int weather_exit_callback(void *param)
     {
         free(run_data);
         run_data = NULL;
+        Serial.println("Weather Old App: run_data freed");
     }
+    
+    // 停止AHT20传感器相关的I2C总线（可选）
+    // AHT20_Wire.end(); // 如果需要完全释放I2C资源可以取消注释
+    
+    Serial.println("Weather Old App: Exit completed");
     return 0;
 }
 
@@ -306,22 +351,8 @@ static void weather_message_handle(const char *from, const char *to,
     {
     case APP_MESSAGE_WIFI_CONN:
     {
-        Serial.print(GET_SYS_MILLIS());
-        Serial.print(F("----->weather_event_notification\n"));
         int event_id = (int)message;
-        if (0 == run_data->clock_page && run_data->clock_page == event_id)
-        {
-            // 如果要改城市这里也需要修改
-            char api[128] = "";
-            snprintf(api, 128, ZHIXIN_WEATHER_API, cfg_data.weather_key.c_str(),
-                     cfg_data.cityname.c_str(), cfg_data.language.c_str());
-            Weather weather = getWeather(api);
-            // Weather weather = getWeather("https://api.seniverse.com/v3/weather/now.json?key=" +
-            //                              g_cfg.weather_key + "&location=" + g_cfg.cityname + "&language=" +
-            //                              g_cfg.language + "&unit=" + unit);
-            UpdateWeather(&weather, LV_SCR_LOAD_ANIM_NONE);
-        }
-        else if (1 == run_data->clock_page && run_data->clock_page == event_id)
+        if (1 == run_data->clock_page && run_data->clock_page == event_id)
         {
             long long timestamp = getTimestamp(TIME_API) + TIMEZERO_OFFSIZE; // nowapi时间API
             UpdateTime_RTC(timestamp, LV_SCR_LOAD_ANIM_NONE);
@@ -335,25 +366,13 @@ static void weather_message_handle(const char *from, const char *to,
     case APP_MESSAGE_GET_PARAM:
     {
         char *param_key = (char *)message;
-        if (!strcmp(param_key, "cityname"))
+        if (!strcmp(param_key, "sensorUpdateInterval"))
         {
-            snprintf((char *)ext_info, 32, "%s", cfg_data.cityname.c_str());
+            snprintf((char *)ext_info, 32, "%lu", cfg_data.sensorUpdateInterval);
         }
-        else if (!strcmp(param_key, "language"))
+        else if (!strcmp(param_key, "timeUpdateInterval"))
         {
-            snprintf((char *)ext_info, 32, "%s", cfg_data.language.c_str());
-        }
-        else if (!strcmp(param_key, "weather_key"))
-        {
-            snprintf((char *)ext_info, 32, "%s", cfg_data.weather_key.c_str());
-        }
-        else if (!strcmp(param_key, "weatherUpdataInterval"))
-        {
-            snprintf((char *)ext_info, 32, "%lu", cfg_data.weatherUpdataInterval);
-        }
-        else if (!strcmp(param_key, "timeUpdataInterval"))
-        {
-            snprintf((char *)ext_info, 32, "%lu", cfg_data.timeUpdataInterval);
+            snprintf((char *)ext_info, 32, "%lu", cfg_data.timeUpdateInterval);
         }
         else
         {
@@ -365,25 +384,13 @@ static void weather_message_handle(const char *from, const char *to,
     {
         char *param_key = (char *)message;
         char *param_val = (char *)ext_info;
-        if (!strcmp(param_key, "cityname"))
+        if (!strcmp(param_key, "sensorUpdateInterval"))
         {
-            cfg_data.cityname = param_val;
+            cfg_data.sensorUpdateInterval = atol(param_val);
         }
-        else if (!strcmp(param_key, "language"))
+        else if (!strcmp(param_key, "timeUpdateInterval"))
         {
-            cfg_data.language = param_val;
-        }
-        else if (!strcmp(param_key, "weather_key"))
-        {
-            cfg_data.weather_key = param_val;
-        }
-        else if (!strcmp(param_key, "weatherUpdataInterval"))
-        {
-            cfg_data.weatherUpdataInterval = atol(param_val);
-        }
-        else if (!strcmp(param_key, "timeUpdataInterval"))
-        {
-            cfg_data.timeUpdataInterval = atol(param_val);
+            cfg_data.timeUpdateInterval = atol(param_val);
         }
     }
     break;

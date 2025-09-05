@@ -21,6 +21,9 @@
 #include "common.h"
 #include "temp.h"
 
+// 取消注释下面的行来启用温度传感器调试输出
+// #define TEMP_DEBUG_OUTPUT
+
 TEMP::TEMP()
 {
     this->ready = false;
@@ -30,20 +33,28 @@ TEMP::TEMP()
 
 void TEMP::init()
 {
+#ifdef TEMP_DEBUG_OUTPUT
     Serial.println("Qwiic Humidity AHT20");
+#endif
 
     Wire.begin(TEMP_I2C_SDA, TEMP_I2C_SCL); //Join I2C bus
+#ifdef TEMP_DEBUG_OUTPUT
     Serial.printf("I2C initialized with SDA=%d, SCL=%d\n", TEMP_I2C_SDA, TEMP_I2C_SCL);
+#endif
     
     delay(100); // 等待I2C稳定
 
     //Check if the AHT20 will acknowledge
     if (false == tempSensor.begin())
     {
+#ifdef TEMP_DEBUG_OUTPUT
         Serial.println("AHT20 not detected. Please check wiring. Freezing.");
+#endif
         return;
     }
+#ifdef TEMP_DEBUG_OUTPUT
     Serial.println("AHT20 acknowledged.");
+#endif
     
     // 等待传感器完全准备好
     delay(500);
@@ -57,7 +68,9 @@ int TEMP::getTemp()
 {
     if (!this->ready)
     {
+#ifdef TEMP_DEBUG_OUTPUT
         Serial.println("AHT20 not ready. Please init first.");
+#endif
         this->init();
         if (!this->ready)
             return -1;
@@ -70,6 +83,7 @@ int TEMP::getTemp()
         temperature = tempSensor.getTemperature();
         humidity = tempSensor.getHumidity();
 
+#ifdef TEMP_DEBUG_OUTPUT
         //Print the results
         Serial.print("Temperature: ");
         Serial.print(temperature, 2);
@@ -77,14 +91,16 @@ int TEMP::getTemp()
         Serial.print("Humidity: ");
         Serial.print(humidity, 2);
         Serial.print("% RH");
-
         Serial.println();
+#endif
 
         return 0;
     }
     else
     {
+#ifdef TEMP_DEBUG_OUTPUT
         Serial.println("No new measurement available from AHT20");
+#endif
         return -1;
     }
 }
