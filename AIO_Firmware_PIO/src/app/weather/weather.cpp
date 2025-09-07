@@ -22,7 +22,6 @@
 #define UPDATE_WEATHER 0x01       // 更新天气
 #define UPDATE_DALIY_WEATHER 0x02 // 更新每天天气
 #define UPDATE_TIME 0x04          // 更新时间
-#define UPDATE_LOCAL_TEMP 0x08    // 更新本地传感器温度
 
 // // NTP 服务器信息
 // const char* ntpServer = "ntp.aliyun.com"; // 阿里云NTP服务器
@@ -44,7 +43,6 @@ struct WT_Config
     String tianqi_api_key;               // api的key
     unsigned long weatherUpdataInterval; // 天气更新的时间间隔(s)
     unsigned long timeUpdataInterval;    // 日期时钟更新的时间间隔(s)
-    unsigned long localTempUpdataInterval; // 本地温度更新的时间间隔(s)
 };
 
 static void write_config(WT_Config *cfg)
@@ -60,9 +58,6 @@ static void write_config(WT_Config *cfg)
     w_data += tmp;
     memset(tmp, 0, 16);
     snprintf(tmp, 16, "%lu\n", cfg->timeUpdataInterval);
-    w_data += tmp;
-    memset(tmp, 0, 16);
-    snprintf(tmp, 16, "%lu\n", cfg->localTempUpdataInterval);
     w_data += tmp;
     g_flashCfg.writeFile(WEATHER_CONFIG_PATH, w_data.c_str());
 }
@@ -82,20 +77,18 @@ static void read_config(WT_Config *cfg)
         cfg->tianqi_api_key = "";
         cfg->weatherUpdataInterval = 900000; // 天气更新的时间间隔900000(900s)
         cfg->timeUpdataInterval = 900000;    // 日期时钟更新的时间间隔900000(900s)
-        cfg->localTempUpdataInterval = 2000; // 本地温度更新的时间间隔2000(2s)
         write_config(cfg);
     }
     else
     {
         // 解析数据
-        char *param[6] = {0};
-        analyseParam(info, 6, param);
+        char *param[5] = {0};
+        analyseParam(info, 5, param);
         cfg->tianqi_url = param[0];
         cfg->tianqi_city_code = param[1];
         cfg->tianqi_api_key = param[2];
         cfg->weatherUpdataInterval = atol(param[3]);
         cfg->timeUpdataInterval = atol(param[4]);
-        cfg->localTempUpdataInterval = atol(param[5]);
     }
 }
 
@@ -103,8 +96,6 @@ struct WeatherAppRunData
 {
     unsigned long preWeatherMillis; // 上一回更新天气时的毫秒数
     unsigned long preTimeMillis;    // 更新时间计数器
-
-    unsigned long preTempMillis;    // 上一回更新本地传感器时的毫秒数
     long long preNetTimestamp;      // 上一次的网络时间戳
     long long errorNetTimestamp;    // 网络到显示过程中的时间误差
     long long preLocalTimestamp;    // 上一次的本地机器时间戳
@@ -126,8 +117,7 @@ enum WEA_EVENT_ID
 {
     UPDATE_NOW,
     UPDATE_NTP,
-    UPDATE_DAILY,
-    UPDATE_LOCAL
+    UPDATE_DAILY
 };
 
 /*
@@ -366,23 +356,6 @@ static long long get_timestamp(String url)
     return run_data->preNetTimestamp;
 }
 
-static void get_localTemperature()
-{
-    int result = localTemp.getTemp();
-    if (result == 0) // 成功读取到数据
-    {
-        Serial.printf("Local sensor - Temp = %.2f C, Hum = %.2f %%\n", localTemp.temperature, localTemp.humidity);
-        
-        // 将本地传感器数据存储到天气结构体中
-        run_data->wea.temperatureLocal = (int)localTemp.temperature;
-        run_data->wea.humidityLocal = (int)localTemp.humidity;
-    }
-    else
-    {
-        Serial.println("Failed to read from local temperature sensor");
-    }
-}
-
 static void get_daliyWeather(short maxT[], short minT[])
 {
     if (WL_CONNECTED != WiFi.status())
@@ -464,7 +437,6 @@ static int weather_init(AppController *sys)
     run_data->clock_page = 0;
     run_data->preWeatherMillis = 0;
     run_data->preTimeMillis = 0;
-    run_data->preTempMillis = 0;
     // 强制更新
     run_data->coactusUpdateFlag = 0x01;
     run_data->update_type = 0x00; // 表示什么也不需要更新
@@ -480,11 +452,6 @@ static int weather_init(AppController *sys)
     //     1,                               /*任务的优先级*/
     //     &run_data->xHandle_task_update); /*任务句柄*/
 
-    localTemp.init(); // 初始化温湿度传感器
-    
-    // 初始化时获取一次传感器数据
-    delay(100); // 等待传感器稳定
-    get_localTemperature();
     return 0;
 }
 
@@ -502,8 +469,7 @@ static void weather_process(AppController *sys,
     {
         // 间接强制更新
         run_data->coactusUpdateFlag = 0x01;
-        // 减少延迟，提高响应速度
-        // delay(500); // 以防间接强制更新后，生产很多请求 使显示卡顿
+        delay(500); // 以防间接强制更新后，生产很多请求 使显示卡顿
     }
     else if (TURN_RIGHT == act_info->active)
     {
@@ -522,13 +488,6 @@ static void weather_process(AppController *sys,
     if (run_data->clock_page == 0)
     {
         display_weather(run_data->wea, anim_type);
-        
-        // 独立的本地传感器更新（每5秒更新一次，减少I2C总线占用）
-        if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(5000, &run_data->preTempMillis, false))
-        {
-            get_localTemperature();
-        }
-        
         if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.weatherUpdataInterval, &run_data->preWeatherMillis, false))
         {
             sys->send_to(WEATHER_APP_NAME, CTRL_NAME,
@@ -536,33 +495,26 @@ static void weather_process(AppController *sys,
             sys->send_to(WEATHER_APP_NAME, CTRL_NAME,
                          APP_MESSAGE_WIFI_CONN, (void *)UPDATE_DAILY, NULL);
         }
-        if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.localTempUpdataInterval, &run_data->preLocalTempMillis, false))
-        {
-            // sys->send_to(WEATHER_APP_NAME, CTRL_NAME,
-            //              APP_MESSAGE_WIFI_CONN, (void *)UPDATE_LOCAL, NULL);
-            get_localTemperature();
-        }
+
         if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.timeUpdataInterval, &run_data->preTimeMillis, false))
         {
             // 尝试同步网络上的时钟
             sys->send_to(WEATHER_APP_NAME, CTRL_NAME,
                          APP_MESSAGE_WIFI_CONN, (void *)UPDATE_NTP, NULL);
         }
-        else if (GET_SYS_MILLIS() - run_data->preLocalTimestamp > 100)  // 减少到100ms更新一次，提高流畅度
+        else if (GET_SYS_MILLIS() - run_data->preLocalTimestamp > 400)
         {
             updateTime_RTC(get_timestamp());
         }
         run_data->coactusUpdateFlag = 0x00; // 取消强制更新标志
         display_space();
-        // 移除delay，让主循环更流畅
-        // delay(30);
+        delay(30);
     }
     else if (run_data->clock_page == 1)
     {
         // 仅在切换界面时获取一次未来天气
         display_curve(run_data->wea.daily_max, run_data->wea.daily_min, anim_type);
-        // 减少延迟，提高响应速度
-        // delay(300);
+        delay(300);
     }
 }
 
@@ -613,11 +565,6 @@ static void task_update(void *parameter)
             get_daliyWeather(run_data->wea.daily_max, run_data->wea.daily_min);
             run_data->update_type &= (~UPDATE_DALIY_WEATHER);
         }
-        if (run_data->update_type & UPDATE_LOCAL_TEMP)
-        {
-            get_localTemperature();
-            run_data->update_type &= (~UPDATE_LOCAL_TEMP);
-        }
         vTaskDelay(300 / portTICK_PERIOD_MS);
     }
 }
@@ -661,15 +608,6 @@ static void weather_message_handle(const char *from, const char *to,
             get_daliyWeather(run_data->wea.daily_max, run_data->wea.daily_min);
         };
         break;
-        case UPDATE_LOCAL:
-        {
-            Serial.print(F("local temperature update.\n"));
-            run_data->update_type |= UPDATE_LOCAL_TEMP;
-
-            // 更新过程，使用如下代码或者替换成异步任务
-            get_localTemperature();
-        };
-        break;
         default:
             break;
         }
@@ -697,10 +635,6 @@ static void weather_message_handle(const char *from, const char *to,
         else if (!strcmp(param_key, "timeUpdataInterval"))
         {
             snprintf((char *)ext_info, 32, "%lu", cfg_data.timeUpdataInterval);
-        }
-        else if (!strcmp(param_key, "localTempUpdataInterval"))
-        {
-            snprintf((char *)ext_info, 32, "%lu", cfg_data.localTempUpdataInterval);
         }
         else
         {
@@ -731,10 +665,6 @@ static void weather_message_handle(const char *from, const char *to,
         else if (!strcmp(param_key, "timeUpdataInterval"))
         {
             cfg_data.timeUpdataInterval = atol(param_val);
-        }
-        else if (!strcmp(param_key, "localTempUpdataInterval"))
-        {
-            cfg_data.localTempUpdataInterval = atol(param_val);
         }
     }
     break;

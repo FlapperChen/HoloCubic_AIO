@@ -1,6 +1,7 @@
 #define LV_ATTRIBUTE_IMG_WEATHER_VERSION 2
 
 #include "weather_old_gui.h"
+#include <stdlib.h>
 
 #if LV_ATTRIBUTE_IMG_WEATHER_VERSION == 1
 #include "weather_old_image_1.h"
@@ -10,22 +11,24 @@
 
 #include "lvgl.h"
 
-static lv_obj_t *wc_scr[3];
+static lv_obj_t *wc_scr[2];
 
 static lv_obj_t *weather_image = NULL;
-static lv_obj_t *cityname_label = NULL;
 static lv_obj_t *temperature_label = NULL;
 static lv_obj_t *temperature_symbol = NULL;
+static lv_obj_t *humidity_label = NULL;
+static lv_obj_t *humidity_symbol = NULL;
+static lv_obj_t *main_temp_label = NULL;
+static lv_obj_t *temperature_bar = NULL;
+static lv_obj_t *humidity_bar = NULL;
+static lv_obj_t *temp_bar_label = NULL;
+static lv_obj_t *hum_bar_label = NULL;
 
 static lv_obj_t *time_image = NULL;
 static lv_obj_t *date_label = NULL;
 static lv_obj_t *time_label = NULL;
 
-static lv_obj_t *cpu_temp_label = NULL;
-static lv_obj_t *cpu_used_label = NULL;
-static lv_obj_t *mem_used_label = NULL;
-static lv_obj_t *net_upload_label = NULL;
-static lv_obj_t *net_download_label = NULL;
+static lv_obj_t *humidity_main_label = NULL;
 
 // static lv_group_t *g;
 static lv_style_t default_style;
@@ -33,6 +36,10 @@ static lv_style_t label_style1;
 static lv_style_t label_style2;
 static lv_style_t label_style3;
 static lv_style_t label_style4;
+static lv_style_t temp_bar_bg_style;
+static lv_style_t temp_bar_indic_style;
+static lv_style_t hum_bar_bg_style;
+static lv_style_t hum_bar_indic_style;
 
 LV_FONT_DECLARE(lv_font_montserrat_20);
 LV_FONT_DECLARE(lv_font_montserrat_24);
@@ -103,6 +110,36 @@ void weather_old_gui_init(void)
     lv_style_set_text_opa(&label_style4, LV_OPA_COVER);
     lv_style_set_text_color(&label_style4, lv_color_white());
     lv_style_set_text_font(&label_style4, &lv_font_montserrat_20);
+
+    // 温度进度条背景样式
+    lv_style_init(&temp_bar_bg_style);
+    lv_style_set_border_color(&temp_bar_bg_style, lv_color_white()); // 白色边框
+    lv_style_set_border_width(&temp_bar_bg_style, 2);
+    lv_style_set_pad_all(&temp_bar_bg_style, 6); // 使指示器更小
+    lv_style_set_radius(&temp_bar_bg_style, 6);
+    lv_style_set_anim_time(&temp_bar_bg_style, 800); // 增加动画时间到800ms
+
+    // 温度进度条指示器样式
+    lv_style_init(&temp_bar_indic_style);
+    lv_style_set_bg_opa(&temp_bar_indic_style, LV_OPA_COVER);
+    lv_style_set_bg_color(&temp_bar_indic_style, lv_color_white()); // 白色
+    lv_style_set_radius(&temp_bar_indic_style, 3);
+    lv_style_set_anim_time(&temp_bar_indic_style, 800); // 添加动画时间
+
+    // 湿度进度条背景样式
+    lv_style_init(&hum_bar_bg_style);
+    lv_style_set_border_color(&hum_bar_bg_style, lv_color_white()); // 白色边框
+    lv_style_set_border_width(&hum_bar_bg_style, 2);
+    lv_style_set_pad_all(&hum_bar_bg_style, 6); // 使指示器更小
+    lv_style_set_radius(&hum_bar_bg_style, 6);
+    lv_style_set_anim_time(&hum_bar_bg_style, 800); // 增加动画时间到800ms
+
+    // 湿度进度条指示器样式
+    lv_style_init(&hum_bar_indic_style);
+    lv_style_set_bg_opa(&hum_bar_indic_style, LV_OPA_COVER);
+    lv_style_set_bg_color(&hum_bar_indic_style, lv_color_white()); // 白色
+    lv_style_set_radius(&hum_bar_indic_style, 3);
+    lv_style_set_anim_time(&hum_bar_indic_style, 800); // 添加动画时间
 }
 
 void display_weather_old_init()
@@ -116,21 +153,36 @@ void display_weather_old_init()
 
     // 天气页初始化
     wc_scr[0] = lv_obj_create(NULL);
+    if (NULL == wc_scr[0]) {
+        // 处理内存分配失败的情况
+        return;
+    }
     lv_obj_add_style(wc_scr[0], &default_style, LV_STATE_DEFAULT);
 
     weather_image = lv_img_create(wc_scr[0]);
-
-    cityname_label = lv_label_create(wc_scr[0]);
-    lv_obj_add_style(cityname_label, &label_style1, LV_STATE_DEFAULT);
-
-    temperature_label = lv_label_create(wc_scr[0]);
-    lv_obj_add_style(temperature_label, &label_style2, LV_STATE_DEFAULT);
-
-    temperature_symbol = lv_label_create(wc_scr[0]);
-    lv_obj_add_style(temperature_symbol, &label_style1, LV_STATE_DEFAULT);
+    if (NULL == weather_image) {
+        return;
+    }
+    
+    // 初始化时就创建标签，避免重复创建
+    temp_bar_label = lv_label_create(wc_scr[0]);
+    if (temp_bar_label != NULL) {
+        lv_obj_add_style(temp_bar_label, &label_style4, LV_STATE_DEFAULT);
+    }
+    
+    hum_bar_label = lv_label_create(wc_scr[0]);
+    if (hum_bar_label != NULL) {
+        lv_obj_add_style(hum_bar_label, &label_style4, LV_STATE_DEFAULT);
+    }
+    
+    // 创建主要温度显示标签（替代图片）
+    main_temp_label = lv_label_create(wc_scr[0]);
+    if (main_temp_label != NULL) {
+        lv_obj_add_style(main_temp_label, &label_style2, LV_STATE_DEFAULT); // 使用大字体
+    }
 }
 
-void display_weather_old(const char *cityname, const char *temperature, int weathercode, lv_scr_load_anim_t anim_type)
+void display_weather_old(const char *title, const char *temperature, int weathercode, lv_scr_load_anim_t anim_type)
 {
     display_weather_old_init();
     const void *path = NULL;
@@ -144,15 +196,75 @@ void display_weather_old(const char *cityname, const char *temperature, int weat
     }
 
     lv_img_set_src(weather_image, path);
-    lv_label_set_text(cityname_label, cityname);
-    lv_label_set_text_fmt(temperature_label, "%s", temperature);
-    // LV_ALIGN_RIGHT_MID
-    lv_label_set_text_fmt(temperature_symbol, "°C");
 
     lv_obj_align(weather_image, LV_ALIGN_CENTER, 0, -30);
-    lv_obj_align(cityname_label, LV_ALIGN_BOTTOM_LEFT, 20, -30);
-    lv_obj_align_to(temperature_label, cityname_label, LV_ALIGN_OUT_RIGHT_BOTTOM, 10, 0);
-    lv_obj_align_to(temperature_symbol, temperature_label, LV_ALIGN_OUT_RIGHT_BOTTOM, 10, 0);
+
+    if (LV_SCR_LOAD_ANIM_NONE != anim_type)
+    {
+        lv_scr_load_anim(wc_scr[0], anim_type, 300, 300, false);
+    }
+    else
+    {
+        lv_scr_load(wc_scr[0]);
+    }
+}
+
+void display_sensor_data(const char *temperature, const char *humidity, lv_scr_load_anim_t anim_type)
+{
+    display_weather_old_init();
+    
+    // 解析温湿度数值
+    float temp_val = atof(temperature);
+    float hum_val = atof(humidity);
+    
+    // 显示主要温度数值（替代图片），保留一位小数
+    lv_label_set_text_fmt(main_temp_label, "%.1f°C", temp_val);
+    
+    // 只在进度条不存在时创建，避免重复创建
+    if (temperature_bar == NULL) {
+        // 创建温度进度条（横向）
+        temperature_bar = lv_bar_create(wc_scr[0]);
+        lv_obj_remove_style_all(temperature_bar); // 清除所有样式以获得干净的开始
+        lv_obj_add_style(temperature_bar, &temp_bar_bg_style, 0);
+        lv_obj_add_style(temperature_bar, &temp_bar_indic_style, LV_PART_INDICATOR);
+        lv_obj_set_size(temperature_bar, 180, 20);
+        lv_bar_set_range(temperature_bar, 0, 50); // 0到50度
+        lv_obj_align(temperature_bar, LV_ALIGN_CENTER, -20, 30);
+    }
+    
+    if (humidity_bar == NULL) {
+        // 创建湿度进度条（横向）
+        humidity_bar = lv_bar_create(wc_scr[0]);
+        lv_obj_remove_style_all(humidity_bar); // 清除所有样式以获得干净的开始
+        lv_obj_add_style(humidity_bar, &hum_bar_bg_style, 0);
+        lv_obj_add_style(humidity_bar, &hum_bar_indic_style, LV_PART_INDICATOR);
+        lv_obj_set_size(humidity_bar, 180, 20);
+        lv_bar_set_range(humidity_bar, 0, 100); // 0到100%
+        lv_obj_align(humidity_bar, LV_ALIGN_CENTER, -20, 70);
+    }
+    
+    // 更新标签文本，保留一位小数
+    lv_label_set_text_fmt(temp_bar_label, "%.1f°C", temp_val);
+    lv_label_set_text_fmt(hum_bar_label, "%.1f%%", hum_val);
+    
+    // 限制数值范围
+    if (temp_val < 0) temp_val = 0;
+    if (temp_val > 50) temp_val = 50;
+    if (hum_val < 0) hum_val = 0;
+    if (hum_val > 100) hum_val = 100;
+    
+    // 布局排列 - 主温度显示在顶部中央
+    lv_obj_align(main_temp_label, LV_ALIGN_CENTER, 0, -40);
+    
+    // 温度数值标签在进度条右侧
+    lv_obj_align_to(temp_bar_label, temperature_bar, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+    
+    // 湿度数值标签在进度条右侧
+    lv_obj_align_to(hum_bar_label, humidity_bar, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+
+    // 使用动画更新进度条的值，每次都从当前值过渡到新值
+    lv_bar_set_value(temperature_bar, (int32_t)temp_val, LV_ANIM_ON);
+    lv_bar_set_value(humidity_bar, (int32_t)hum_val, LV_ANIM_ON);
 
     if (LV_SCR_LOAD_ANIM_NONE != anim_type)
     {
@@ -173,15 +285,30 @@ void display_time_old_init()
     weather_old_obj_del();
     lv_obj_clean(act_obj); // 清空此前页面
 
-    // 日期时间页初始化
+    // 湿度显示页初始化
     wc_scr[1] = lv_obj_create(NULL);
+    if (NULL == wc_scr[1]) {
+        // 处理内存分配失败的情况
+        return;
+    }
     lv_obj_add_style(wc_scr[1], &default_style, LV_STATE_DEFAULT);
 
-    time_image = lv_img_create(wc_scr[1]);
-    date_label = lv_label_create(wc_scr[1]);
-    lv_obj_add_style(date_label, &label_style3, LV_STATE_DEFAULT);
-    time_label = lv_label_create(wc_scr[1]);
-    lv_obj_add_style(time_label, &label_style3, LV_STATE_DEFAULT);
+    // 创建主要湿度显示标签（替代主温度显示）
+    humidity_main_label = lv_label_create(wc_scr[1]);
+    if (humidity_main_label != NULL) {
+        lv_obj_add_style(humidity_main_label, &label_style2, LV_STATE_DEFAULT); // 使用大字体
+    }
+    
+    // 保留温度进度条相关标签
+    temp_bar_label = lv_label_create(wc_scr[1]);
+    if (temp_bar_label != NULL) {
+        lv_obj_add_style(temp_bar_label, &label_style4, LV_STATE_DEFAULT);
+    }
+    
+    hum_bar_label = lv_label_create(wc_scr[1]);
+    if (hum_bar_label != NULL) {
+        lv_obj_add_style(hum_bar_label, &label_style4, LV_STATE_DEFAULT);
+    }
 }
 
 void display_time_old(const char *date, const char *time, lv_scr_load_anim_t anim_type)
@@ -207,49 +334,71 @@ void display_time_old(const char *date, const char *time, lv_scr_load_anim_t ani
     }
 }
 
-void display_hardware_old_init()
+void display_humidity_data(const char *humidity, const char *temperature, lv_scr_load_anim_t anim_type)
 {
-    lv_obj_t *act_obj = lv_scr_act(); // 获取当前活动页
-    if (act_obj == wc_scr[2])
-        return;
+    display_time_old_init();
+    
+    // 解析温湿度数值
+    float hum_val = atof(humidity);
+    float temp_val = atof(temperature);
+    
+    // 显示主要湿度数值，保留一位小数
+    lv_label_set_text_fmt(humidity_main_label, "%.1f%%", hum_val);
+    
+    // 只在进度条不存在时创建，避免重复创建
+    if (temperature_bar == NULL) {
+        // 创建温度进度条（横向）
+        temperature_bar = lv_bar_create(wc_scr[1]);
+        lv_obj_remove_style_all(temperature_bar); // 清除所有样式以获得干净的开始
+        lv_obj_add_style(temperature_bar, &temp_bar_bg_style, 0);
+        lv_obj_add_style(temperature_bar, &temp_bar_indic_style, LV_PART_INDICATOR);
+        lv_obj_set_size(temperature_bar, 180, 20);
+        lv_bar_set_range(temperature_bar, 0, 50); // 0到50度
+        lv_obj_align(temperature_bar, LV_ALIGN_CENTER, -20, 30);
+    }
+    
+    if (humidity_bar == NULL) {
+        // 创建湿度进度条（横向）
+        humidity_bar = lv_bar_create(wc_scr[1]);
+        lv_obj_remove_style_all(humidity_bar); // 清除所有样式以获得干净的开始
+        lv_obj_add_style(humidity_bar, &hum_bar_bg_style, 0);
+        lv_obj_add_style(humidity_bar, &hum_bar_indic_style, LV_PART_INDICATOR);
+        lv_obj_set_size(humidity_bar, 180, 20);
+        lv_bar_set_range(humidity_bar, 0, 100); // 0到100%
+        lv_obj_align(humidity_bar, LV_ALIGN_CENTER, -20, 70);
+    }
+    
+    // 更新标签文本，保留一位小数
+    lv_label_set_text_fmt(temp_bar_label, "%.1f°C", temp_val);
+    lv_label_set_text_fmt(hum_bar_label, "%.1f%%", hum_val);
+    
+    // 限制数值范围
+    if (temp_val < 0) temp_val = 0;
+    if (temp_val > 50) temp_val = 50;
+    if (hum_val < 0) hum_val = 0;
+    if (hum_val > 100) hum_val = 100;
+    
+    // 布局排列 - 主湿度显示在顶部中央
+    lv_obj_align(humidity_main_label, LV_ALIGN_CENTER, 0, -40);
+    
+    // 温度数值标签在进度条右侧
+    lv_obj_align_to(temp_bar_label, temperature_bar, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+    
+    // 湿度数值标签在进度条右侧
+    lv_obj_align_to(hum_bar_label, humidity_bar, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
 
-    weather_old_obj_del();
-    lv_obj_clean(act_obj); // 清空此前页面
+    // 使用动画更新进度条的值，每次都从当前值过渡到新值
+    lv_bar_set_value(temperature_bar, (int32_t)temp_val, LV_ANIM_ON);
+    lv_bar_set_value(humidity_bar, (int32_t)hum_val, LV_ANIM_ON);
 
-    // 硬件信息页初始化
-    wc_scr[2] = lv_obj_create(NULL);
-    lv_obj_add_style(wc_scr[2], &default_style, LV_STATE_DEFAULT);
-
-    cpu_temp_label = lv_label_create(wc_scr[2]);
-    lv_obj_add_style(cpu_temp_label, &label_style4, LV_STATE_DEFAULT);
-    cpu_used_label = lv_label_create(wc_scr[2]);
-    lv_obj_add_style(cpu_used_label, &label_style4, LV_STATE_DEFAULT);
-    mem_used_label = lv_label_create(wc_scr[2]);
-    lv_obj_add_style(mem_used_label, &label_style4, LV_STATE_DEFAULT);
-    net_upload_label = lv_label_create(wc_scr[2]);
-    lv_obj_add_style(net_upload_label, &label_style4, LV_STATE_DEFAULT);
-    net_download_label = lv_label_create(wc_scr[2]);
-    lv_obj_add_style(net_download_label, &label_style4, LV_STATE_DEFAULT);
-
-    // 绘制
-    lv_obj_align(cpu_temp_label, LV_ALIGN_BOTTOM_LEFT, 2, 30);
-    lv_obj_align(cpu_used_label, LV_ALIGN_BOTTOM_LEFT, 2, 60);
-    lv_obj_align(mem_used_label, LV_ALIGN_BOTTOM_LEFT, 2, 90);
-    lv_obj_align(net_upload_label, LV_ALIGN_BOTTOM_LEFT, 2, 120);
-    lv_obj_align(net_download_label, LV_ALIGN_BOTTOM_LEFT, 2, 150);
-}
-
-void display_hardware_old(const char *info, lv_scr_load_anim_t anim_type)
-{
-    display_hardware_old_init();
-
-    lv_label_set_text_fmt(cpu_temp_label, "CPU Temp: %d °C", 0);
-    lv_label_set_text_fmt(cpu_used_label, "CPU Used: %d北京\%", 0);
-    lv_label_set_text_fmt(mem_used_label, "Mem Used: %dMB", 0);
-    lv_label_set_text_fmt(net_upload_label, "Net Upload: %dKB/s", 0);
-    lv_label_set_text_fmt(net_download_label, "Net Download: %dKB/s", 0);
-
-    lv_scr_load_anim(wc_scr[2], anim_type, 300, 300, false);
+    if (LV_SCR_LOAD_ANIM_NONE != anim_type)
+    {
+        lv_scr_load_anim(wc_scr[1], anim_type, 300, 300, false);
+    }
+    else
+    {
+        lv_scr_load(wc_scr[1]);
+    }
 }
 
 void weather_old_obj_del(void)
@@ -258,9 +407,15 @@ void weather_old_obj_del(void)
     {
         lv_obj_clean(wc_scr[0]);
         weather_image = NULL;
-        cityname_label = NULL;
         temperature_label = NULL;
         temperature_symbol = NULL;
+        humidity_label = NULL;
+        humidity_symbol = NULL;
+        temperature_bar = NULL;
+        humidity_bar = NULL;
+        temp_bar_label = NULL;
+        hum_bar_label = NULL;
+        main_temp_label = NULL;
     }
 
     if (NULL != wc_scr[1])
@@ -269,22 +424,13 @@ void weather_old_obj_del(void)
         time_image = NULL;
         date_label = NULL;
         time_label = NULL;
-    }
-
-    if (NULL != wc_scr[2])
-    {
-        lv_obj_clean(wc_scr[2]);
-        cpu_temp_label = NULL;
-        cpu_used_label = NULL;
-        mem_used_label = NULL;
-        net_upload_label = NULL;
-        net_download_label = NULL;
+        humidity_main_label = NULL;
     }
 }
 
 void weather_old_gui_del(void)
 {
-    for (int pos = 0; pos < 3; ++pos)
+    for (int pos = 0; pos < 2; ++pos)
     {
         if (NULL != wc_scr[pos])
         {
@@ -292,19 +438,20 @@ void weather_old_gui_del(void)
             wc_scr[pos] = NULL;
 
             weather_image = NULL;
-            cityname_label = NULL;
             temperature_label = NULL;
             temperature_symbol = NULL;
+            humidity_label = NULL;
+            humidity_symbol = NULL;
+            temperature_bar = NULL;
+            humidity_bar = NULL;
+            temp_bar_label = NULL;
+            hum_bar_label = NULL;
+            main_temp_label = NULL;
 
             time_image = NULL;
             date_label = NULL;
             time_label = NULL;
-
-            cpu_temp_label = NULL;
-            cpu_used_label = NULL;
-            mem_used_label = NULL;
-            net_upload_label = NULL;
-            net_download_label = NULL;
+            humidity_main_label = NULL;
         }
     }
 
